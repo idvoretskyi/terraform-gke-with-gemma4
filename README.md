@@ -1,154 +1,177 @@
-# GKE Terraform Configuration for Gemma 3
+# GKE Terraform Configuration for Gemma 4
 
-This Terraform configuration provides a cost-effective GKE cluster optimized for running Google's Gemma 3 model.
+Terraform configuration for a cost-optimized GKE cluster running Google's [Gemma 4](https://ollama.com/library/gemma4) model, served by [Ollama](https://ollama.com).
 
 ## Features
 
-- Cost-optimized GKE cluster using ARM-based nodes (t2a machine type)
-- Spot/Preemptible VM instances for additional cost savings
-- Node taints to ensure Gemma 3 pods are properly scheduled
-- Auto-scaling node pool to adjust to demand
-- Fully automated deployment of Gemma 3 using pure Terraform (no scripts needed)
+- Modular layout (`modules/network`, `modules/gke`, `modules/gemma4`) wired together by an example consumer at `examples/basic/`.
+- Cost-optimized GKE node pool using ARM-based `t2a-standard-2` Spot VMs.
+- Auto-detects `project_id`, `region`, `zone`, and billing/quota project from the local `gcloud` config — apply with zero variables.
+- Workload Identity, Gateway API, and Managed Prometheus enabled by default.
+- Dedicated node pool with taints + tolerations so only Gemma 4 pods land on it.
+- Pulls the chosen Gemma 4 model into Ollama on container startup via a `postStart` lifecycle hook.
+- Optional GPU node pool path documented for the larger `26b` / `31b` variants.
 
 ## Architecture
-
-This configuration:
-1. Creates a VPC and subnet with secondary ranges for pods and services
-2. Deploys a GKE cluster with a default node pool removed
-3. Creates a custom node pool with ARM-based VMs and spot pricing for cost efficiency
-4. Automatically deploys Gemma 3 as a Kubernetes Deployment with a LoadBalancer Service
-5. Sets up proper node selectors and taints to ensure Gemma 3 runs on the correct nodes
 
 ```mermaid
 flowchart TD
     subgraph "Google Cloud Platform"
-        VPC["VPC Network"] --> Subnet["Subnet with Secondary Ranges"]
-        Subnet --> GKE["GKE Cluster"]
-        GKE --> NodePool["ARM-based Node Pool\n(Spot VMs)"]
-        
-        subgraph "Kubernetes"
-            Namespace["Namespace: gemma3"]
-            Deploy["Deployment: Gemma3"]
-            Service["Service: LoadBalancer"]
-            Pod["Gemma3 Pod"]
+        VPC["VPC Network"] --> Subnet["Subnet w/ secondary ranges"]
+        Subnet --> GKE["GKE Cluster (VPC-native, Workload Identity)"]
+        GKE --> NodePool["ARM t2a-standard-2 Node Pool (Spot)"]
 
-            Namespace --> Deploy
-            Deploy --> Pod
-            Pod --> |exposes| Service
-            Service --> |external IP| Internet["Internet"]
+        subgraph "Kubernetes"
+            NS["Namespace: gemma4"]
+            Dep["Deployment: gemma4 (ollama/ollama)"]
+            Svc["Service: LoadBalancer"]
+            NS --> Dep --> Svc
         end
 
-        NodePool --> Namespace
+        NodePool --> NS
+        Svc --> Internet["Internet"]
     end
 
-    User["User/Client"] --> Internet
-    Terraform["Terraform\nConfiguration"] --> |creates| VPC
+    User["User / Client"] --> Internet
+    TF["Terraform (examples/basic)"] -->|creates| VPC
+    TF -->|deploys| Dep
 ```
 
 ## Prerequisites
 
-- Google Cloud SDK installed and configured
-- Terraform v1.0+ installed
-- Access to a Google Cloud Project with billing enabled
-- Required APIs enabled:
-  - compute.googleapis.com
-  - container.googleapis.com
+- [Terraform](https://developer.hashicorp.com/terraform/downloads) **>= 1.13**
+- [Google Cloud SDK (`gcloud`)](https://cloud.google.com/sdk/docs/install) authenticated against your project
+- [`jq`](https://jqlang.org/download/) on `PATH` (used to marshal `gcloud` values into Terraform)
+- A GCP project with billing enabled and the following APIs:
+  - `compute.googleapis.com`
+  - `container.googleapis.com`
 
-## Quick Start
-
-1. **Authenticate with GCP**:
+## Zero-config quick start
 
 ```bash
+# 1. Authenticate
 gcloud auth login
 gcloud auth application-default login
 gcloud config set project YOUR_PROJECT_ID
-```
+gcloud config set compute/region us-central1
+gcloud config set compute/zone   us-central1-a
 
-2. **Clone this repository**:
-
-```bash
-git clone https://github.com/idvoretskyi/terraform-gke-with-gemma3.git
-cd terraform-gke-with-gemma3/gemma3
-```
-
-3. **Create a terraform.tfvars file**:
-
-```bash
-cp terraform.tfvars.example terraform.tfvars
-```
-
-4. **Edit terraform.tfvars** to customize your deployment:
-
-```bash
-# Edit with your preferred text editor
-vim terraform.tfvars
-```
-
-5. **Initialize and apply the Terraform configuration**:
-
-```bash
+# 2. Apply
+cd examples/basic
 terraform init
-terraform plan
 terraform apply
 ```
 
-6. **Configure kubectl** to connect to your new cluster:
+That's it. Terraform pulls `project_id`, `region`, and `zone` straight from your `gcloud` config — no `terraform.tfvars` needed.
+
+To override anything, copy and edit:
 
 ```bash
+cp terraform.tfvars.example terraform.tfvars
+$EDITOR terraform.tfvars
+```
+
+## Talking to Gemma 4
+
+```bash
+# Configure kubectl
 $(terraform output -raw kubectl_configure_command)
+
+# Watch the rollout
+$(terraform output -raw gemma4_check_status_command)
+
+# Get the LoadBalancer IP
+EXTERNAL_IP=$(kubectl -n gemma4 get svc gemma4 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+# Generate
+curl http://$EXTERNAL_IP/api/generate -d '{
+  "model":"gemma4:e2b",
+  "prompt":"Explain GKE Workload Identity in one paragraph."
+}'
 ```
 
-7. **Access Gemma 3** deployed to your cluster:
+## Model selection
+
+Available [Gemma 4 tags on Ollama](https://ollama.com/library/gemma4):
+
+| Tag | Size | Context | Modalities | Suggested node |
+| --- | --- | --- | --- | --- |
+| `gemma4:e2b` (default) | 7.2 GB | 128K | Text, Image | `t2a-standard-2` (tight) / `t2a-standard-4` (recommended) |
+| `gemma4:e4b` / `gemma4:latest` | 9.6 GB | 128K | Text, Image | `t2a-standard-4` |
+| `gemma4:26b` (MoE) | 18 GB | 256K | Text, Image | GPU (e.g. `g2-standard-12` + `nvidia-l4`) |
+| `gemma4:31b` (Dense) | 20 GB | 256K | Text, Image | GPU |
+| `gemma4:31b-cloud` | – | 256K | Text, Image | Ollama Cloud only — not deployable here |
+
+> **Note**: `t2a-standard-2` (8 GiB total RAM) is the cheapest viable default and runs `gemma4:e2b`, but allocatable memory is tight. If you see OOMKills or slow cold starts, switch to `t2a-standard-4`.
+
+Switch models by setting `gemma4_model` in `terraform.tfvars`.
+
+## Advanced
+
+### GPU node pool (for `gemma4:26b` / `gemma4:31b`)
+
+```hcl
+machine_type      = "g2-standard-12"
+accelerator_type  = "nvidia-l4"
+accelerator_count = 1
+
+gemma4_model = "gemma4:26b"
+gemma4_resources = {
+  cpu_request    = "4"
+  cpu_limit      = "8"
+  memory_request = "24Gi"
+  memory_limit   = "32Gi"
+}
+```
+
+The GKE module enables NVIDIA driver auto-install (`gpu_driver_version = "LATEST"`) and ARM tolerations are still applied — drop the `kubernetes.io/arch=arm64` toleration in `modules/gemma4/variables.tf` if you switch to amd64 GPU nodes.
+
+### Private cluster
+
+```hcl
+private_cluster  = true
+# master_ipv4_cidr defaults to 172.16.0.0/28
+```
+
+### Remote state (optional)
+
+Add a backend block such as:
+
+```hcl
+terraform {
+  backend "gcs" {
+    bucket = "your-tfstate-bucket"
+    prefix = "gemma4"
+  }
+}
+```
+
+then `terraform init -reconfigure`.
+
+## Cleaning up
 
 ```bash
-# Check the status of the Gemma 3 deployment
-$(terraform output -raw gemma3_check_status_command)
-
-# Get Gemma 3 external IP
-$(terraform output -raw gemma3_get_ip_command)
-```
-
-Once you have the IP address, you can access the Gemma 3 API at `http://<IP_ADDRESS>`.
-
-## Advanced Configuration
-
-### Cluster Settings
-
-For advanced scenarios, the following configuration options are available:
-
-- `private_cluster`: Set to `true` to create a private GKE cluster
-- `enable_gvisor`: Set to `true` to enable gVisor container sandbox for enhanced security
-- `local_ssd_count`: Set to a non-zero value to attach local SSDs for faster model loading
-- `use_spot_vms`: Set to `false` to use regular VMs instead of spot VMs
-
-### Gemma 3 Customization
-
-You can customize the Gemma 3 deployment by adjusting these variables in your `terraform.tfvars` file:
-
-```terraform
-# Gemma 3 Configuration
-k8s_namespace        = "gemma3"     # Kubernetes namespace
-gemma3_replicas      = 1            # Number of Gemma 3 instances
-gemma3_image         = "ghcr.io/google-deepmind/gemma:latest"
-gemma3_cpu_limit     = "4"          # CPU resource limit
-gemma3_memory_limit  = "16Gi"       # Memory resource limit
-gemma3_cpu_request   = "2"          # CPU resource request
-gemma3_memory_request = "8Gi"       # Memory resource request
-```
-
-Refer to `variables.tf` for all available configuration options.
-
-## Cleaning Up
-
-To delete all resources created by this configuration:
-
-```bash
+cd examples/basic
 terraform destroy
+```
+
+`deletion_protection` defaults to `false`, so destroy works without extra steps.
+
+## Repository layout
+
+```
+.
+├── README.md
+├── GEMINI.md
+├── examples/basic/      # zero-config consumer of all three modules
+└── modules/
+    ├── network/         # VPC + subnet with secondary ranges
+    ├── gke/             # cluster + node pool
+    └── gemma4/          # namespace, deployment, service (Ollama serving Gemma 4)
 ```
 
 ## Notes
 
-- This configuration uses your specified GCP project
-- Spot/Preemptible VMs can be terminated at any time. Consider using a managed instance group for more resilience.
-- ARM compatibility: Ensure that the Gemma 3 image is built for the ARM architecture.
-- This configuration uses COS_CONTAINERD as the node image type, which is optimized for running containers.
+- Spot VMs can be reclaimed at any time; for steadier availability set `use_spot_vms = false`.
+- ARM compatibility: `ollama/ollama` is multi-arch (`linux/amd64`, `linux/arm64`) and runs natively on `t2a` nodes.
+- `COS_CONTAINERD` is the node image type and is the recommended default for GKE.

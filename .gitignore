@@ -79,7 +79,7 @@ service-account.json
 *.key
 
 # Actual tfvars file that might contain sensitive information
-gemma3/terraform.tfvars
+**/terraform.tfvars
 
 # Temporary files
 /tmp/

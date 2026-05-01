@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------------------------------------------------
+# All values below are OPTIONAL. With `gcloud config set project ...` set locally, you can apply with no overrides.
+# Uncomment any line to override the gcloud-derived or built-in default.
+# ---------------------------------------------------------------------------------------------------------------------
+
+# project_id = "your-gcp-project-id"
+# region     = "us-central1"
+# zone       = "us-central1-a"
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Cluster
+# ---------------------------------------------------------------------------------------------------------------------
+# cluster_name        = "gemma4-cluster"
+# release_channel     = "RAPID"   # RAPID | REGULAR | STABLE
+# deletion_protection = false
+# private_cluster     = false
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Network
+# ---------------------------------------------------------------------------------------------------------------------
+# subnet_cidr  = "10.0.0.0/24"
+# pod_cidr     = "10.1.0.0/16"
+# service_cidr = "10.2.0.0/16"
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Node pool (ARM + Spot for cost efficiency by default)
+# ---------------------------------------------------------------------------------------------------------------------
+# machine_type        = "t2a-standard-2"
+# disk_size_gb        = 100
+# disk_type           = "pd-standard"
+# use_spot_vms        = true
+# use_preemptible_vms = false
+# min_node_count      = 1
+# max_node_count      = 3
+# initial_node_count  = 1
+# local_ssd_count     = 0
+
+# Optional GPU node pool. To run gemma4:26b or gemma4:31b switch to a GPU machine and accelerator:
+# machine_type      = "g2-standard-12"
+# accelerator_type  = "nvidia-l4"
+# accelerator_count = 1
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Gemma 4 deployment
+# ---------------------------------------------------------------------------------------------------------------------
+# gemma4_namespace    = "gemma4"
+# gemma4_replicas     = 1
+# gemma4_image        = "ollama/ollama:latest"
+# gemma4_model        = "gemma4:e2b"        # e2b | e4b | latest | 26b | 31b
+# gemma4_service_type = "LoadBalancer"
+#
+# gemma4_resources = {
+#   cpu_request    = "1"
+#   cpu_limit      = "2"
+#   memory_request = "5Gi"
+#   memory_limit   = "6Gi"
+# }
